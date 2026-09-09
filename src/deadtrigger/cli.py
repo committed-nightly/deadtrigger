@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import sys
+import textwrap
 
 from . import gitcmd, workflows
 from .core import (
@@ -42,16 +43,6 @@ from .workflows import WORKFLOW_DIR, WorkflowError
 EXIT_OK = 0
 EXIT_DEAD = 1
 EXIT_ERROR = 2
-
-HEADLINE = {
-    NO_SUCH_WORKFLOW: "names a workflow that does not exist",
-    OFF_DEFAULT_BRANCH: "is on the wrong branch to ever fire",
-    DEAD_CRON: "is a schedule that never comes round",
-    UNMATCHED_REF: "names a branch or tag that does not exist",
-    DEAD_PATH_FILTER: "cannot be satisfied by any file in the repository",
-    UNMATCHED_PATH: "matches no file in the repository",
-    IMPOSSIBLE_IF: "is a condition that is never true",
-}
 
 ORDER = [
     OFF_DEFAULT_BRANCH,
@@ -77,8 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="a path inside the repository to check (default: the current directory)",
     )
     parser.add_argument(
-        "--ref", default="HEAD",
-        help="check the workflows as they are at this revision (default: HEAD)",
+        "--ref", default=None,
+        help=(
+            "check the workflows as they were at this revision, instead of as "
+            "they are on disk now"
+        ),
     )
     parser.add_argument(
         "--default-branch", default=None, metavar="NAME",
@@ -91,8 +85,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _load(repo_root: str, ref: str) -> list:
-    """Every workflow file at ``ref``, parsed."""
+def _load(repo_root: str, ref: str | None) -> list:
+    """Every workflow file, parsed.
+
+    With no --ref this reads the files as they are on disk, so that you can
+    edit a filter and find out whether it is dead before committing it --
+    which is the moment the answer is worth anything.
+    """
     paths = sorted(
         path
         for path in gitcmd.tracked_files(repo_root, ref)
@@ -100,8 +99,12 @@ def _load(repo_root: str, ref: str) -> list:
     )
     sheet = []
     for path in paths:
-        text = gitcmd.show(ref, path, repo_root)
-        if text is None:  # pragma: no cover - ls-tree just said it is there
+        text = (
+            gitcmd.read_worktree(repo_root, path)
+            if ref is None
+            else gitcmd.show(ref, path, repo_root)
+        )
+        if text is None:  # pragma: no cover - git just said it is there
             continue
         sheet.append(workflows.parse(text, path))
     return sheet
@@ -120,7 +123,17 @@ def _print_human(report, out) -> None:
         for finding in by_kind.get(kind, []):
             print(f"  {finding.workflow}", file=out)
             print(f"      {finding.where}: {finding.subject}", file=out)
-            print(f"      {HEADLINE[kind]} -- {finding.detail}", file=out)
+            # The kind is printed rather than a prose headline so that what
+            # you grep for in the terminal is the same string --json gives.
+            print(
+                textwrap.fill(
+                    f"{kind}: {finding.detail}",
+                    width=80,
+                    initial_indent=" " * 6,
+                    subsequent_indent=" " * 6,
+                ),
+                file=out,
+            )
             print(file=out)
 
     checked = _plural(report.workflows_checked, "workflow")
@@ -146,15 +159,17 @@ def main(argv: list[str] | None = None, out=None, err=None) -> int:
 
     try:
         root = gitcmd.repo_root(args.path)
-        gitcmd.resolve(args.ref, root)
+        if args.ref is not None:
+            gitcmd.resolve(args.ref, root)
         sheet = _load(root, args.ref)
     except (GitError, WorkflowError) as exc:
         print(f"deadtrigger: {exc}", file=err)
         return EXIT_ERROR
 
     if not sheet:
+        where = f" at {args.ref}" if args.ref else ""
         print(
-            f"deadtrigger: no workflow files in {WORKFLOW_DIR}/ at {args.ref}",
+            f"deadtrigger: no workflow files in {WORKFLOW_DIR}/{where}",
             file=err,
         )
         return EXIT_ERROR

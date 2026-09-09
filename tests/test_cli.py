@@ -481,6 +481,45 @@ class TestErrors:
         assert "on.push.paths" in err
 
 
+class TestUncommittedWork:
+    """With no --ref the answer is about the files as they are now, which is
+    the only moment at which it can still save you a push."""
+
+    def test_a_staged_workflow_is_checked(self, repo):
+        repo.write("src/main.py")
+        repo.workflow("ci.yml", "name: CI\non:\n  push:\n    paths: ['nope/**']\njobs: {}\n")
+        assert run(repo)[0] == EXIT_DEAD
+
+    def test_an_uncommitted_edit_is_checked(self, repo):
+        repo.write("src/main.py")
+        repo.workflow("ci.yml", "name: CI\non:\n  push:\n    paths: ['src/**']\njobs: {}\n")
+        repo.commit()
+        assert run(repo)[0] == EXIT_OK
+
+        # Edited on disk, not staged, not committed.
+        import os
+
+        with open(
+            os.path.join(repo.path, ".github/workflows/ci.yml"), "w", encoding="utf-8"
+        ) as handle:
+            handle.write("name: CI\non:\n  push:\n    paths: ['lib/**']\njobs: {}\n")
+        assert run(repo)[0] == EXIT_DEAD
+
+    def test_untracked_files_are_not_counted_as_matches(self, repo):
+        """git decides what is in the repository, not the filesystem: a build
+        directory nobody committed must not make a path filter look alive."""
+        repo.write("src/main.py")
+        repo.workflow("ci.yml", "name: CI\non:\n  push:\n    paths: ['build/**']\njobs: {}\n")
+        repo.commit()
+
+        import os
+
+        os.makedirs(os.path.join(repo.path, "build"))
+        with open(os.path.join(repo.path, "build/out.o"), "w") as handle:
+            handle.write("x")
+        assert run(repo)[0] == EXIT_DEAD
+
+
 class TestRef:
     def test_ref_reads_the_workflows_at_that_revision(self, repo):
         repo.write("src/main.py")

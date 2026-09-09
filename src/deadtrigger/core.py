@@ -15,6 +15,7 @@ indistinguishable from a check that passed.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import cached_property
 
 from . import cron as croncheck
 from . import ifexpr, workflows
@@ -80,6 +81,21 @@ class Repo:
     refs_are_complete: bool
     # Workflow paths present on the default branch, or None if we cannot see it.
     default_branch_workflows: set[str] | None = None
+
+    @cached_property
+    def directories(self) -> set[str]:
+        """Every directory in the tree, as a path with no trailing slash.
+
+        Only used to tell one kind of dead path filter from another: a
+        pattern naming a real directory is the `docs` / `docs/**` mistake,
+        and saying so is more use than "matches nothing".
+        """
+        found: set[str] = set()
+        for path in self.files:
+            parts = path.split("/")[:-1]
+            for index in range(1, len(parts) + 1):
+                found.add("/".join(parts[:index]))
+        return found
 
 
 def check(sheet: list[Workflow], repo: Repo) -> Report:
@@ -270,10 +286,16 @@ def _check_path_filter(flow, event, key, raw, repo: Repo, report: Report) -> Non
             # An exclusion that currently excludes nothing is a guard against
             # files that do not exist yet. That is what a guard is for.
             continue
-        report.add(
-            UNMATCHED_PATH, flow.path, where, pattern.text,
-            "matches no file in the repository",
-        )
+
+        if pattern.text in repo.directories:
+            detail = (
+                f"{pattern.text} is a directory, and a path filter is matched "
+                f"against the paths of changed *files*. Editing anything under "
+                f"it does not trigger this workflow -- {pattern.text}/** does"
+            )
+        else:
+            detail = "no file in the repository is matched by it"
+        report.add(UNMATCHED_PATH, flow.path, where, pattern.text, detail)
 
 
 def _check_jobs(flow: Workflow, report: Report) -> None:

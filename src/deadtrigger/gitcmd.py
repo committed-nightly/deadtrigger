@@ -14,6 +14,7 @@ the repository of naming something that does not exist.
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 
@@ -53,13 +54,19 @@ def is_shallow(cwd: str) -> bool:
     return run_git(["rev-parse", "--is-shallow-repository"], cwd).strip() == "true"
 
 
-def tracked_files(cwd: str, ref: str) -> list[str]:
+def tracked_files(cwd: str, ref: str | None = None) -> list[str]:
     """Every file at ``ref``, as repo-root-relative paths.
+
+    With no ref this is the index rather than a commit, so that editing a
+    workflow and running the tool tells you something before you commit it.
 
     ``-z`` because a newline in a path is legal in git, rare, and exactly the
     sort of thing that would make a checker quietly miscount.
     """
-    out = run_git(["ls-tree", "-r", "-z", "--name-only", ref], cwd)
+    if ref is None:
+        out = run_git(["ls-files", "-z", "--cached"], cwd)
+    else:
+        out = run_git(["ls-tree", "-r", "-z", "--name-only", ref], cwd)
     return [path for path in out.split("\0") if path]
 
 
@@ -69,6 +76,21 @@ def show(ref: str, relpath: str, cwd: str) -> str | None:
         return run_git(["show", f"{ref}:{relpath}"], cwd)
     except GitError:
         return None
+
+
+def read_worktree(root: str, relpath: str) -> str | None:
+    """Contents of a tracked file as it is right now.
+
+    Falls back to the index for a file that is tracked but not on disk --
+    staged deletions and sparse checkouts both produce that, and neither is
+    a reason to stop checking.
+    """
+    full = os.path.join(root, relpath)
+    try:
+        with open(full, encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+    except OSError:
+        return show("", relpath, root)
 
 
 def _strip_remote(refname: str) -> str | None:
