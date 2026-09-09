@@ -543,6 +543,25 @@ class TestUncommittedWork:
             handle.write("name: CI\non:\n  push:\n    paths: ['lib/**']\njobs: {}\n")
         assert run(repo)[0] == EXIT_DEAD
 
+    def test_a_workflow_file_that_is_not_in_git_yet_is_still_checked(self, repo):
+        """A brand new workflow producing no findings and no warning would be
+        indistinguishable from a clean one. Workflow files come from the
+        directory; only the repository contents they are checked against come
+        from git."""
+        repo.write("src/main.py")
+        repo.commit()
+
+        import os
+
+        os.makedirs(os.path.join(repo.path, ".github/workflows"), exist_ok=True)
+        with open(
+            os.path.join(repo.path, ".github/workflows/new.yml"), "w", encoding="utf-8"
+        ) as handle:
+            handle.write("name: New\non:\n  push:\n    paths: ['nope/**']\njobs: {}\n")
+
+        assert repo.git("status", "--short", ".github").strip().startswith("??")
+        assert run(repo)[0] == EXIT_DEAD
+
     def test_untracked_files_are_not_counted_as_matches(self, repo):
         """git decides what is in the repository, not the filesystem: a build
         directory nobody committed must not make a path filter look alive."""

@@ -25,9 +25,14 @@ cd your-repo
 deadtrigger
 ```
 
-It reads the workflow files as they are on disk, so you can check a filter
-before you commit it. `--ref` checks a revision instead, `--json` gives you
-the same findings in a form you can pipe somewhere.
+It reads the workflow files as they are on disk — including one you have
+written but not yet `git add`ed — so you can check a filter before you commit
+it. What they are checked *against* still comes from git: an untracked build
+directory is not something anyone can change in a commit, so it can't make a
+dead path filter look alive.
+
+`--ref` checks a revision instead, `--json` gives you the same findings in a
+form you can pipe somewhere.
 
 ## A real example
 
@@ -242,7 +247,7 @@ pip install -e ".[dev]"
 python -m pytest
 ```
 
-176 tests. The end-to-end ones build real git repositories and make real
+177 tests. The end-to-end ones build real git repositories and make real
 commits in them, because the question this tool answers is about a repository,
 and faking that away would leave the interesting part untested.
 

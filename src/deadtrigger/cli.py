@@ -85,6 +85,39 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _workflow_paths(repo_root: str, ref: str | None) -> list[str]:
+    """The workflow files to check.
+
+    With no --ref these come from the directory rather than from git, so a
+    workflow you have written but not yet added is checked. Taking them from
+    the index instead would mean a brand new workflow file produced no
+    findings and no warning -- indistinguishable from a clean one, which is
+    the exact failure this tool exists to catch.
+
+    The repository *contents* still come from git either way. Path filters
+    are matched against the paths of changed files, and an untracked build
+    directory is not something anyone can change in a commit.
+    """
+    if ref is not None:
+        return sorted(
+            path
+            for path in gitcmd.tracked_files(repo_root, ref)
+            if workflows.is_workflow_path(path)
+        )
+
+    directory = os.path.join(repo_root, WORKFLOW_DIR)
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return []
+    return sorted(
+        f"{WORKFLOW_DIR}/{name}"
+        for name in names
+        if workflows.is_workflow_path(f"{WORKFLOW_DIR}/{name}")
+        and os.path.isfile(os.path.join(directory, name))
+    )
+
+
 def _load(repo_root: str, ref: str | None) -> list:
     """Every workflow file, parsed.
 
@@ -92,11 +125,7 @@ def _load(repo_root: str, ref: str | None) -> list:
     edit a filter and find out whether it is dead before committing it --
     which is the moment the answer is worth anything.
     """
-    paths = sorted(
-        path
-        for path in gitcmd.tracked_files(repo_root, ref)
-        if workflows.is_workflow_path(path)
-    )
+    paths = _workflow_paths(repo_root, ref)
     sheet = []
     for path in paths:
         text = (
