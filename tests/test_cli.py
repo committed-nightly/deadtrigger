@@ -389,6 +389,44 @@ class TestDefaultBranch:
         repo.commit()
         assert run(repo, "--default-branch", "main")[0] == EXIT_OK
 
+    def test_default_branch_that_only_exists_as_a_remote_ref(self, repo, tmp_path):
+        """The shape actions/checkout leaves behind on a pull request: the
+        default branch is refs/remotes/origin/main and nothing else, where
+        plain `git rev-parse main` fails. If --default-branch quietly did
+        nothing here it would do nothing on every CI run."""
+        repo.write("README.md")
+        repo.commit()
+        repo.git("checkout", "-q", "-b", "topic")
+        repo.workflow(
+            "nightly.yml",
+            "name: N\non:\n  schedule:\n    - cron: '0 3 * * *'\njobs: {}\n",
+        )
+        repo.commit()
+
+        import subprocess
+
+        clone = tmp_path / "pr"
+        subprocess.run(
+            ["git", "clone", "-q", "--no-checkout", "file://" + repo.path, str(clone)],
+            check=True, capture_output=True,
+        )
+        # --no-checkout never creates a local `main`, so after this the only
+        # trace of the default branch is refs/remotes/origin/main.
+        subprocess.run(
+            ["git", "checkout", "-q", "-b", "pr-merge", "origin/topic"],
+            cwd=clone, check=True, capture_output=True,
+        )
+        assert subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", "main^{commit}"],
+            cwd=clone, capture_output=True,
+        ).returncode != 0
+
+        out = io.StringIO()
+        code = main([str(clone), "--default-branch", "main"], out=out, err=io.StringIO())
+        assert "not checked: default-branch-only triggers" not in out.getvalue()
+        assert code == EXIT_DEAD
+        assert "off-default-branch" in out.getvalue()
+
     def test_check_is_named_as_skipped_when_the_default_branch_is_unknown(self, repo):
         repo.workflow("ci.yml", "name: CI\non: push\njobs: {}\n")
         repo.commit()

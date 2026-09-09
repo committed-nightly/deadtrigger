@@ -142,9 +142,25 @@ def default_branch(cwd: str) -> str | None:
     return _strip_remote(out) if out.startswith("refs/remotes/") else None
 
 
-def ref_exists(rev: str, cwd: str) -> bool:
-    try:
-        resolve(rev, cwd)
-        return True
-    except GitError:
-        return False
+def resolve_branch(name: str, cwd: str) -> str | None:
+    """A branch name as something git can actually resolve, or None.
+
+    Worth the trouble because of the case this tool most needs to get right:
+    on a pull request, ``actions/checkout`` leaves ``main`` existing only as
+    ``refs/remotes/origin/main``, and plain ``git rev-parse main`` fails
+    there. Taking that failure at face value would make --default-branch
+    silently do nothing on every CI run -- the one place it is needed.
+    """
+    for candidate in (f"refs/heads/{name}", f"refs/remotes/origin/{name}", name):
+        try:
+            resolve(candidate, cwd)
+            return candidate
+        except GitError:
+            continue
+
+    out = run_git(["for-each-ref", "--format=%(refname)", "refs/remotes"], cwd)
+    for line in out.splitlines():
+        line = line.strip()
+        if _strip_remote(line) == name:
+            return line
+    return None

@@ -206,16 +206,18 @@ def _describe(root: str, args) -> Repo:
     default_branch = args.default_branch or gitcmd.default_branch(root)
 
     default_workflows = None
-    if default_branch is not None and gitcmd.ref_exists(default_branch, root):
-        default_workflows = {
-            path
-            for path in gitcmd.tracked_files(root, default_branch)
-            if workflows.is_workflow_path(path)
-        }
-    elif default_branch is not None:
-        # Named a default branch this clone does not have. Better to check
-        # nothing than to report every workflow as stranded off it.
-        default_branch = None
+    if default_branch is not None:
+        rev = gitcmd.resolve_branch(default_branch, root)
+        if rev is None:
+            # Named a default branch this clone does not have. Better to
+            # check nothing than to report every workflow as stranded off it.
+            default_branch = None
+        else:
+            default_workflows = {
+                path
+                for path in gitcmd.tracked_files(root, rev)
+                if workflows.is_workflow_path(path)
+            }
 
     return Repo(
         files=gitcmd.tracked_files(root, args.ref),
