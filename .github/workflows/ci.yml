@@ -73,8 +73,67 @@ jobs:
       - name: nothing is left unchecked in a full clone
         run: |
           deadtrigger --default-branch main > report.txt
+          # Whole line, and before the absence check, because the absence
+          # check says nothing about how much was read. The no-workflows case
+          # is already covered -- deadtrigger exits 2 and `bash -e` kills the
+          # step at the redirect -- but a second workflow file in this
+          # repository would read as `2 workflows checked, clean` and the
+          # guard would go on passing without a word about its subject having
+          # changed. -x so the count has to be re-read rather than grown into.
+          grep -qxF '1 workflow checked, clean' report.txt
           if grep -q '^not checked:' report.txt; then
             cat report.txt
             echo "a check declined to run in a full clone"
             exit 1
           fi
+
+      - name: the guard above fires when a check really is declined
+        # The guard is an absence check and nothing here established that
+        # `not checked:` can be printed at all, so it would have gone on
+        # passing if the skips stopped working (logbook#64). The witness
+        # cannot come from this repository, because the guard requires the
+        # string's absence here -- it has to come from a corpus where the
+        # line does appear.
+        #
+        # One control per cause. `core.check` declines in exactly two places
+        # and a witness for one says nothing about the other; the test in
+        # tests/test_dogfood.py fails if a third one is added without a
+        # control here.
+        #
+        # Both corpora are built here rather than inherited. Plain
+        # actions/checkout leaves refs/remotes/origin/HEAD unset, which would
+        # witness the second cause for free from the runner and stop doing it,
+        # silently, the day that changes.
+        run: |
+          root=/tmp/control
+          mkdir -p "$root/.github/workflows"
+          cat > "$root/.github/workflows/live.yml" <<'YAML'
+          name: Live
+          on:
+            push:
+              branches: [main]
+          jobs:
+            a:
+              runs-on: ubuntu-latest
+              steps: [{run: 'true'}]
+          YAML
+          git -C "$root" init -q -b main
+          git -C "$root" add -A
+          git -C "$root" -c user.name=ci -c user.email=ci@example.invalid \
+            commit -q -m control
+
+          # A fresh `git init` has no origin, so there is no default branch to
+          # find and the default-branch checks decline.
+          deadtrigger "$root" > no-default-branch.txt
+          cat no-default-branch.txt
+          grep -q '^not checked: default-branch-only triggers --' no-default-branch.txt
+
+          # `git clone` does set origin/HEAD, so in the shallow copy the only
+          # check that declines is the one about branch and tag lists.
+          git clone -q --depth 1 "file://$root" /tmp/control-shallow
+          deadtrigger /tmp/control-shallow --default-branch main > shallow.txt
+          cat shallow.txt
+          grep -q '^not checked: branch and tag filters --' shallow.txt
+
+          # Both controls exit 0. A declined check does not change the exit
+          # code, which is the whole reason the guard above reads stdout.
